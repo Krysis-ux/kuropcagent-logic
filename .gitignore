@@ -1,0 +1,13 @@
+target/
+.DS_Store
+.venv/
+__pycache__/
+*.pt
+*.torchscript
+*.pkl
+vision/models/
+vision/raw/
+vision/dataset/
+vision/export/
+vision/scratch/*.png
+vision/scratch/*.jpg
