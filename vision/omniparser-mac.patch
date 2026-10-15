@@ -1,0 +1,39 @@
+diff --git a/util/utils.py b/util/utils.py
+index 22c0508..ef77e44 100644
+--- a/util/utils.py
++++ b/util/utils.py
+@@ -18,17 +18,10 @@ import numpy as np
+ # %matplotlib inline
+ from matplotlib import pyplot as plt
+ import easyocr
+-from paddleocr import PaddleOCR
+ reader = easyocr.Reader(['en'])
+-paddle_ocr = PaddleOCR(
+-    lang='en',  # other lang also available
+-    use_angle_cls=False,
+-    use_gpu=False,  # using cuda will conflict with pytorch in the same process
+-    show_log=False,
+-    max_batch_size=1024,
+-    use_dilation=True,  # improves accuracy
+-    det_db_score_mode='slow',  # improves accuracy
+-    rec_batch_num=1024)
++
++paddle_ocr = None
++
+ import time
+ import base64
+ 
+@@ -63,7 +56,12 @@ def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2
+         from transformers import AutoProcessor, AutoModelForCausalLM 
+         processor = AutoProcessor.from_pretrained("microsoft/Florence-2-base", trust_remote_code=True)
+         if device == 'cpu':
+-            model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float32, trust_remote_code=True)
++            model = AutoModelForCausalLM.from_pretrained(
++        model_name_or_path,
++        torch_dtype=torch.float32,
++        trust_remote_code=True,
++        attn_implementation="eager"
++        )
+         else:
+             model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float16, trust_remote_code=True).to(device)
+     return {'model': model.to(device), 'processor': processor}
