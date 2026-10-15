@@ -1,0 +1,84 @@
+use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
+use kuro_core::cloud::ProviderRegistry;
+use kuro_core::db::Db;
+use kuro_core::engine::EngineManager;
+use kuro_core::free::FreePool;
+use kuro_core::hardware::{HardwareInfo, LiveHardwareMetrics};
+use kuro_core::mcp::McpManager;
+use kuro_core::settings::SearchSettings;
+use kuro_core::tools::web_search::SearchConfig;
+use kuro_core::workspace::ProcessRegistry;
+use kuro_core::{Paths, SecretStore};
+use tokio::sync::Mutex;
+
+pub type SharedState = Arc<AppState>;
+
+pub struct AppState {
+    pub db: Db,
+    pub paths: Paths,
+    pub hardware: HardwareInfo,
+    pub live_hardware: LiveHardwareMetrics,
+    pub engines: Arc<EngineManager>,
+    /// Client for Hugging Face and GitHub.
+    pub outbound: reqwest::Client,
+    /// API keys and bearer tokens, kept out of the database.
+    pub secrets: SecretStore,
+    /// Connected MCP tool servers.
+    pub mcp: Arc<McpManager>,
+    /// Remote model providers the user holds the key for.
+    pub providers: Arc<ProviderRegistry>,
+    /// Providers with free tiers, pooled behind one model id.
+    pub free: FreePool,
+    /// Dev servers and other long-running commands started from a workspace.
+    pub processes: ProcessRegistry,
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    pub port: u16,
+    /// Cancellation flags for in-flight downloads, keyed by download id.
+    pub download_cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
+}
+
+impl AppState {
+    pub fn uptime_seconds(&self) -> i64 {
+        (chrono::Utc::now() - self.started_at).num_seconds().max(0)
+    }
+
+    /// Search configuration, with the provider's key read from the credential
+    /// store rather than from the settings table.
+    pub fn search_config(&self) -> kuro_core::Result<SearchConfig> {
+        let stored = SearchSettings::resolve(&self.db)?;
+        Ok(SearchConfig {
+            provider: stored.provider,
+            api_key: self.secrets.get(SearchSettings::KEY_REFERENCE)?,
+            base_url: stored.base_url,
+        })
+    }
+
+    /// Register a cancellation flag so `POST /downloads/{id}/cancel` can stop
+    /// a transfer that is already streaming.
+    pub async fn register_download(&self, download_id: &str) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        self.download_cancels
+            .lock()
+            .await
+            .insert(download_id.to_string(), flag.clone());
+        flag
+    }
+
+    pub async fn cancel_download(&self, download_id: &str) -> bool {
+        let flags = self.download_cancels.lock().await;
+        match flags.get(download_id) {
+            Some(flag) => {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub async fn forget_download(&self, download_id: &str) {
+        self.download_cancels.lock().await.remove(download_id);
+    }
+}
